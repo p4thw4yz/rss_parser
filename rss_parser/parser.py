@@ -1,5 +1,4 @@
 import re
-import base64
 import logging
 import pandas as pd
 import feedparser
@@ -91,7 +90,39 @@ class RssParser:
         self.global_days_back = global_days_back
         self._xml: Optional[str] = None
 
-    # ── DataFrame ingestion ───────────────────────────────────────────────────
+    # ── Construction ───────────────────────────────────────────────────────────
+
+    @classmethod
+    def from_config(cls, config: dict) -> "RssParser":
+        """
+        Construct an RssParser from a single config dict.
+
+        Expected keys (matching feeds_config.json schema)::
+
+            name                 (required) – used as the output file name
+            sources              (required) – list of source dicts
+            output_title         (optional, defaults to name)
+            output_description   (optional)
+            output_link          (optional)
+            filters              (optional)
+            global_max_articles  (optional)
+            global_days_back     (optional)
+        """
+        sources = config.get("sources", [])
+        if not sources:
+            raise ValueError(f"Config '{config.get('name')}' has no sources")
+        name = config.get("name", "feed")
+        return cls(
+            feeds_df=pd.DataFrame(sources),
+            output_title=config.get("output_title", name),
+            output_description=config.get("output_description", ""),
+            output_link=config.get("output_link", ""),
+            filters=config.get("filters") or [],
+            global_max_articles=config.get("global_max_articles"),
+            global_days_back=config.get("global_days_back"),
+        )
+
+    # ── DataFrame ingestion ──────────────────────────────────────────────────
 
     @staticmethod
     def _parse_feeds_df(df: pd.DataFrame) -> list:
@@ -299,11 +330,7 @@ class RssParser:
         return self._xml
 
     def save(self, path: str) -> None:
-        """
-        Write the generated feed XML to a local file.
-
-        Raises RuntimeError if process() has not been called.
-        """
+        """Write the generated feed XML to a local file."""
         if self._xml is None:
             raise RuntimeError("Call process() before save()")
         with open(path, "w", encoding="utf-8") as fh:
@@ -319,51 +346,114 @@ class RssParser:
         commit_message: str = "chore: update RSS feed",
     ) -> str:
         """
-        Push the generated feed XML to a GitHub repository via the Contents API.
-
-        Args:
-            token:          GitHub personal access token with ``repo`` write scope.
-            repo:           Repository in ``"owner/repo"`` format.
-            file_path:      Path within the repo to write the feed file.
-            branch:         Target branch (must already exist).
-            commit_message: Git commit message.
-
-        Returns:
-            ``raw.githubusercontent.com`` URL of the published file.
-
-        Raises:
-            RuntimeError:       If process() has not been called first.
-            requests.HTTPError: If the GitHub API call fails.
+        Push a single feed XML to GitHub via the Contents API.
+        For pushing multiple feeds at once use push_feeds_to_github().
         """
         if self._xml is None:
             raise RuntimeError("Call process() before push_to_github()")
-
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept":        "application/vnd.github.v3+json",
-        }
-        url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
-
-        # Fetch current file SHA so we can update in-place rather than create
-        existing_sha = None
-        r = requests.get(url, headers=headers, params={"ref": branch})
-        if r.status_code == 200:
-            existing_sha = r.json().get("sha")
-
-        payload = {
-            "message": commit_message,
-            "content": base64.b64encode(self._xml.encode()).decode(),
-            "branch":  branch,
-        }
-        if existing_sha:
-            payload["sha"] = existing_sha
-
-        r = requests.put(url, headers=headers, json=payload)
-        r.raise_for_status()
-
-        owner, repo_name = repo.split("/", 1)
-        raw_url = (
-            f"https://raw.githubusercontent.com/{owner}/{repo_name}/{branch}/{file_path}"
+        urls = push_feeds_to_github(
+            feeds={file_path: self._xml},
+            token=token,
+            repo=repo,
+            branch=branch,
+            commit_message=commit_message,
         )
-        logger.info("Feed published to %s", raw_url)
-        return raw_url
+        return urls[file_path]
+
+
+# ── Batch publisher ──────────────────────────────────────────────────────────────
+
+def push_feeds_to_github(
+    feeds: dict,
+    token: str,
+    repo: str,
+    branch: str = "main",
+    commit_message: str = "chore: refresh RSS feeds",
+) -> dict:
+    """
+    Push multiple files to GitHub in a **single commit** using the Git Trees API.
+
+    Args:
+        feeds:          Mapping of repo-relative path → file content string.
+                        e.g. ``{"feeds/tech.xml": "<?xml ...", ...}``
+        token:          GitHub PAT with ``repo`` write scope (or Actions
+                        ``GITHUB_TOKEN`` with ``contents: write``).
+        repo:           ``"owner/repo"`` format.
+        branch:         Target branch (must already exist).
+        commit_message: Git commit message.
+
+    Returns:
+        Dict of ``{file_path: raw_githubusercontent.com URL}``.
+
+    Raises:
+        requests.HTTPError: On any GitHub API failure.
+    """
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github.v3+json",
+    }
+    base = f"https://api.github.com/repos/{repo}"
+
+    # Resolve current HEAD commit and its tree
+    r = requests.get(f"{base}/git/ref/heads/{branch}", headers=headers)
+    r.raise_for_status()
+    base_commit_sha = r.json()["object"]["sha"]
+
+    r = requests.get(f"{base}/git/commits/{base_commit_sha}", headers=headers)
+    r.raise_for_status()
+    base_tree_sha = r.json()["tree"]["sha"]
+
+    # Create a blob for every file
+    tree_entries = []
+    for path, content in feeds.items():
+        r = requests.post(
+            f"{base}/git/blobs",
+            headers=headers,
+            json={"content": content, "encoding": "utf-8"},
+        )
+        r.raise_for_status()
+        tree_entries.append({
+            "path": path,
+            "mode": "100644",
+            "type": "blob",
+            "sha":  r.json()["sha"],
+        })
+        logger.debug("Blob created for %s", path)
+
+    # Build a new tree on top of the existing one
+    r = requests.post(
+        f"{base}/git/trees",
+        headers=headers,
+        json={"base_tree": base_tree_sha, "tree": tree_entries},
+    )
+    r.raise_for_status()
+    new_tree_sha = r.json()["sha"]
+
+    # Create the commit
+    r = requests.post(
+        f"{base}/git/commits",
+        headers=headers,
+        json={
+            "message": commit_message,
+            "tree":    new_tree_sha,
+            "parents": [base_commit_sha],
+        },
+    )
+    r.raise_for_status()
+    new_commit_sha = r.json()["sha"]
+
+    # Advance the branch pointer
+    r = requests.patch(
+        f"{base}/git/refs/heads/{branch}",
+        headers=headers,
+        json={"sha": new_commit_sha},
+    )
+    r.raise_for_status()
+
+    logger.info("Pushed %d file(s) in commit %s", len(feeds), new_commit_sha[:7])
+
+    owner, repo_name = repo.split("/", 1)
+    return {
+        path: f"https://raw.githubusercontent.com/{owner}/{repo_name}/{branch}/{path}"
+        for path in feeds
+    }

@@ -1,8 +1,9 @@
 # rss_parser
 
-A class-based Python RSS aggregator that fetches multiple RSS/Atom feeds
-concurrently, filters and sorts articles, and publishes a combined feed to
-GitHub so any RSS reader can subscribe to it.
+A class-based Python RSS aggregator. Define multiple output feeds in
+`feeds_config.json`; running `main.py` fetches all sources concurrently,
+applies filters, and publishes every feed as a separate XML file in a
+`feeds/` directory — all in a single GitHub commit.
 
 ## Quick start
 
@@ -12,80 +13,98 @@ export GITHUB_TOKEN=ghp_your_token_here
 python main.py
 ```
 
-This generates `feed.xml` locally **and** pushes it to GitHub.  
-Subscribe readers to the raw URL:
+Subscribe any RSS reader to a raw URL like:
 
 ```
-https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/feed.xml
+https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/feeds/tech.xml
+https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/feeds/ai.xml
 ```
 
-## Usage
+## Config format (`feeds_config.json`)
 
-```python
-import pandas as pd
-from rss_parser import RssParser
-
-feeds = pd.DataFrame([
-    {"name": "Hacker News", "url": "https://hnrss.org/frontpage",
-     "category": "Tech", "max_articles": 20, "days_back": 1},
-    {"name": "NASA News",   "url": "https://www.nasa.gov/news-release/feed/",
-     "category": "Space",  "max_articles": 10, "days_back": 14},
-])
-
-parser = RssParser(
-    feeds_df=feeds,
-    output_title="My Feed",
-    output_description="Curated tech & space articles",
-    filters=[
-        {"field": "title", "type": "not_contains", "value": "sponsored"},
+```json
+[
+  {
+    "name": "tech",
+    "output_title": "Tech & Dev",
+    "output_description": "Technology and developer news",
+    "global_days_back": 7,
+    "global_max_articles": 15,
+    "sources": [
+      {
+        "name": "Hacker News",
+        "url": "https://hnrss.org/frontpage",
+        "category": "Technology",
+        "max_articles": 20,
+        "days_back": 1
+      }
     ],
-)
-
-xml = parser.process()          # fetch, filter, sort, generate XML
-parser.save("feed.xml")         # write to disk
-
-raw_url = parser.push_to_github(
-    token="ghp_...",
-    repo="you/your-repo",
-    file_path="feed.xml",
-)
-print(raw_url)
-# https://raw.githubusercontent.com/you/your-repo/main/feed.xml
-```
-
-## DataFrame columns
-
-| Column         | Required | Type  | Description                                        |
-|----------------|----------|-------|----------------------------------------------------|
-| `name`         | yes      | str   | Display name — appears as `<source>` in the feed   |
-| `url`          | yes      | str   | RSS or Atom feed URL                               |
-| `category`     | no       | str   | Grouping label stored as `<category>`              |
-| `description`  | no       | str   | Source description (not written to output)         |
-| `max_articles` | no       | int   | Cap on items taken from this feed                  |
-| `days_back`    | no       | float | Only include items published within the last N days|
-
-Per-feed values override the `global_max_articles` / `global_days_back`
-constructor args.
-
-## Filters
-
-```python
-filters = [
-    {"field": "title",       "type": "not_contains", "value": "sponsored"},
-    {"field": "description", "type": "contains",     "value": "python"},
-    {"field": "category",    "type": "contains",     "value": "AI"},
+    "filters": [
+      {"field": "title", "type": "not_contains", "value": "sponsored"}
+    ]
+  }
 ]
 ```
 
-Supported `field` values: any `Article` attribute (`title`, `description`,
-`source`, `category`).  
-Supported `type` values: `contains`, `not_contains`.
+### Config keys
+
+| Key                   | Required | Description                                              |
+|-----------------------|----------|----------------------------------------------------------|
+| `name`                | yes      | Becomes the output filename: `feeds/{name}.xml`          |
+| `sources`             | yes      | List of source objects (see table below)                 |
+| `output_title`        | no       | `<title>` in the generated feed (defaults to `name`)     |
+| `output_description`  | no       | `<description>` in the generated feed                   |
+| `output_link`         | no       | `<link>` in the generated feed                           |
+| `global_days_back`    | no       | Default age cutoff for this feed’s sources               |
+| `global_max_articles` | no       | Default article cap for this feed’s sources              |
+| `filters`             | no       | List of filter objects (see below)                       |
+
+### Source keys
+
+| Key            | Required | Description                                            |
+|----------------|----------|--------------------------------------------------------|
+| `name`         | yes      | Display name — appears as `<source>` in the output     |
+| `url`          | yes      | RSS or Atom feed URL                                   |
+| `category`     | no       | Stored as `<category>` in output items                 |
+| `max_articles` | no       | Overrides `global_max_articles` for this source        |
+| `days_back`    | no       | Overrides `global_days_back` for this source           |
+
+### Filter keys
+
+```json
+{"field": "title", "type": "not_contains", "value": "sponsored"}
+```
+
+`field`: any Article attribute — `title`, `description`, `source`, `category`  
+`type`: `contains` or `not_contains` (case-insensitive)
+
+## Python API
+
+```python
+from rss_parser import RssParser, push_feeds_to_github
+
+# From a config dict (used by main.py)
+parser = RssParser.from_config(config)
+xml    = parser.process()
+parser.save("feeds/tech.xml")
+
+# Or construct directly from a DataFrame
+import pandas as pd
+parser = RssParser(
+    feeds_df=pd.DataFrame([{"name": "HN", "url": "https://hnrss.org/frontpage"}]),
+    output_title="My Feed",
+)
+
+# Batch-push multiple feeds in one commit
+urls = push_feeds_to_github(
+    feeds={"feeds/tech.xml": tech_xml, "feeds/ai.xml": ai_xml},
+    token="ghp_...",
+    repo="you/your-repo",
+)
+```
 
 ## Automated updates (GitHub Actions)
 
-The included `.github/workflows/update_feed.yml` runs `main.py` every hour
-using the built-in `GITHUB_TOKEN` — no secrets to configure.  Enable it by
-pushing this repo to GitHub with Actions enabled.
-
-To push to a **different** repo, store a PAT as a repository secret called
-`PERSONAL_ACCESS_TOKEN` and update the workflow env accordingly.
+`.github/workflows/update_feed.yml` runs `main.py` every hour using the
+built-in `GITHUB_TOKEN` — no extra secrets needed, just merge and enable
+Actions.

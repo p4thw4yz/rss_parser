@@ -1,0 +1,65 @@
+[
+  {
+    "name": "tech",
+    "output_title": "Tech & Dev",
+    "output_description": "Technology, developer tools, and startup news",
+    "global_days_back": 7,
+    "global_max_articles": 15,
+    "sources": [
+      {"name": "Hacker News",           "url": "https://hnrss.org/frontpage",                          "category": "Technology", "max_articles": 20, "days_back": 1},
+      {"name": "Ars Technica",          "url": "https://feeds.arstechnica.com/arstechnica/index",       "category": "Technology"},
+      {"name": "The Verge",             "url": "https://www.theverge.com/rss/index.xml",                "category": "Technology"},
+      {"name": "Wired",                 "url": "https://www.wired.com/feed/rss",                        "category": "Technology"},
+      {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/",               "category": "Technology", "max_articles": 10}
+    ],
+    "filters": [
+      {"field": "title", "type": "not_contains", "value": "sponsored"},
+      {"field": "title", "type": "not_contains", "value": "advertisement"}
+    ]
+  },
+  {
+    "name": "ai",
+    "output_title": "AI & Machine Learning",
+    "output_description": "Latest developments in artificial intelligence and ML",
+    "global_days_back": 30,
+    "global_max_articles": 10,
+    "sources": [
+      {"name": "OpenAI Blog",          "url": "https://openai.com/news/rss.xml"},
+      {"name": "Google AI Blog",       "url": "https://blog.research.google/atom.xml"},
+      {"name": "DeepMind Blog",        "url": "https://deepmind.google/blog/rss.xml"},
+      {"name": "Towards Data Science", "url": "https://towardsdatascience.com/feed"},
+      {"name": "The Gradient",         "url": "https://thegradient.pub/rss/"},
+      {"name": "Import AI",            "url": "https://jack-clark.net/feed/"}
+    ],
+    "filters": []
+  },
+  {
+    "name": "science",
+    "output_title": "Science & Space",
+    "output_description": "Research breakthroughs and space exploration news",
+    "global_days_back": 14,
+    "global_max_articles": 10,
+    "sources": [
+      {"name": "NASA News",      "url": "https://www.nasa.gov/news-release/feed/",     "category": "Space"},
+      {"name": "Space.com",      "url": "https://www.space.com/feeds/all",             "category": "Space"},
+      {"name": "Nature News",    "url": "https://www.nature.com/nature.rss",           "category": "Science"},
+      {"name": "Science Daily",  "url": "https://www.sciencedaily.com/rss/all.xml",   "category": "Science"},
+      {"name": "Phys.org",       "url": "https://phys.org/rss-feed/",                  "category": "Science"}
+    ],
+    "filters": []
+  },
+  {
+    "name": "news",
+    "output_title": "World News",
+    "output_description": "Top stories from major international outlets",
+    "global_days_back": 1,
+    "global_max_articles": 15,
+    "sources": [
+      {"name": "BBC News",     "url": "https://feeds.bbci.co.uk/news/rss.xml"},
+      {"name": "The Guardian", "url": "https://www.theguardian.com/world/rss"},
+      {"name": "NPR News",     "url": "https://feeds.npr.org/1001/rss.xml"},
+      {"name": "Al Jazeera",   "url": "https://www.aljazeera.com/xml/rss/all.xml"}
+    ],
+    "filters": []
+  }
+]
